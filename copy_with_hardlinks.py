@@ -7,21 +7,34 @@ import sys
 import subprocess
 
 def clone_structure(source_path, dest_dir, preserve_ownership, user_group):
+    errors = []
     source_path = os.path.abspath(source_path)
-    if not os.path.exists(dest_dir):
-        os.makedirs(dest_dir)
-        if preserve_ownership:
-            st = os.stat(source_path)
-            os.chown(dest_dir, st.st_uid, st.st_gid)
-        elif user_group:
-            uid, gid = get_uid_gid(user_group)
-            os.chown(dest_dir, uid, gid)
+    
+    try:
+        if not os.path.exists(dest_dir):
+            os.makedirs(dest_dir)
+            if preserve_ownership:
+                st = os.stat(source_path)
+                os.chown(dest_dir, st.st_uid, st.st_gid)
+            elif user_group:
+                uid, gid = get_uid_gid(user_group)
+                os.chown(dest_dir, uid, gid)
+    except PermissionError as e:
+        print(f"Permission denied creating directory {dest_dir}: {e}")
+        return [f"Dir Permission Denied: {dest_dir}"]
+    except Exception as e:
+        print(f"Error creating directory {dest_dir}: {e}")
+        return [f"Dir Error: {dest_dir} ({e})"]
 
-    if os.path.isdir(source_path):
-        source_items = os.listdir(source_path)
-        source_dir = source_path
+    if os.path.isdir(source_path) and not os.path.islink(source_path):
+        try:
+            source_items = os.listdir(source_path)
+            source_dir = source_path
+        except PermissionError:
+            print(f"Permission denied listing {source_path}")
+            return [f"List Permission Denied: {source_path}"]
     else:
-        # Single file case
+        # Single file or symlink to dir/file
         source_items = [os.path.basename(source_path)]
         source_dir = os.path.dirname(source_path)
 
@@ -29,17 +42,34 @@ def clone_structure(source_path, dest_dir, preserve_ownership, user_group):
         source_item = os.path.join(source_dir, item)
         dest_item = os.path.join(dest_dir, item)
 
-        if os.path.isdir(source_item):
-            clone_structure(source_item, dest_item, preserve_ownership, user_group)
-        else:
-            if os.path.exists(dest_item):
-                os.unlink(dest_item)
-            os.link(source_item, dest_item)
-            if preserve_ownership:
-                shutil.copystat(source_item, dest_item)
-            elif user_group:
-                uid, gid = get_uid_gid(user_group)
-                os.chown(dest_item, uid, gid)
+        try:
+            if os.path.islink(source_item):
+                link_target = os.readlink(source_item)
+                if os.path.exists(dest_item):
+                    os.unlink(dest_item)
+                os.symlink(link_target, dest_item)
+            elif os.path.isdir(source_item):
+                errors.extend(clone_structure(source_item, dest_item, preserve_ownership, user_group))
+            else:
+                if os.path.exists(dest_item):
+                    os.unlink(dest_item)
+                os.link(source_item, dest_item)
+                if preserve_ownership:
+                    shutil.copystat(source_item, dest_item)
+                elif user_group:
+                    uid, gid = get_uid_gid(user_group)
+                    os.chown(dest_item, uid, gid)
+        except FileNotFoundError:
+            print(f"Warning: File not found (skipped): {source_item}")
+            errors.append(f"Not Found: {source_item}")
+        except PermissionError as e:
+            print(f"Warning: Permission denied (skipped): {source_item}")
+            errors.append(f"Permission Denied: {source_item}")
+        except Exception as e:
+            print(f"Warning: Failed to process {source_item}: {e}")
+            errors.append(f"Error: {source_item} ({e})")
+            
+    return errors
 
 def get_uid_gid(user_group):
     if ':' in user_group:
@@ -116,7 +146,11 @@ def main():
     
     args = parser.parse_args()
 
-    clone_structure(args.source, args.destination, args.preserve_ownership, args.user_group)
+    errors = clone_structure(args.source, args.destination, args.preserve_ownership, args.user_group)
+    if errors:
+        print(f"\nCompleted with {len(errors)} issues.")
+    else:
+        print("\nCompleted successfully.")
 
 if __name__ == '__main__':
     main()
