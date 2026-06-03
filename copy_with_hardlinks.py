@@ -3,8 +3,11 @@ import shutil
 import argparse
 import pwd
 import grp
+import sys
+import subprocess
 
 def clone_structure(source_path, dest_dir, preserve_ownership, user_group):
+    source_path = os.path.abspath(source_path)
     if not os.path.exists(dest_dir):
         os.makedirs(dest_dir)
         if preserve_ownership:
@@ -14,12 +17,12 @@ def clone_structure(source_path, dest_dir, preserve_ownership, user_group):
             uid, gid = get_uid_gid(user_group)
             os.chown(dest_dir, uid, gid)
 
-    source_items = []
-    source_dir = source_path
     if os.path.isdir(source_path):
         source_items = os.listdir(source_path)
+        source_dir = source_path
     else:
-        source_items.append(source_dir)
+        # Single file case
+        source_items = [os.path.basename(source_path)]
         source_dir = os.path.dirname(source_path)
 
     for item in source_items:
@@ -47,12 +50,70 @@ def get_uid_gid(user_group):
         uid = gid = int(user_group) if user_group.isdigit() else pwd.getpwnam(user_group).pw_uid
     return uid, gid
 
+def install():
+    if not sys.stdin.isatty():
+        print("Installation must be run from an interactive terminal.")
+        sys.exit(1)
+
+    print("--- Installation Configuration ---")
+    default_p = input("Use --preserve-ownership by default? (y/N): ").lower() == 'y'
+    default_u = ""
+    if input("Use --user-group by default? (y/N): ").lower() == 'y':
+        default_u = input("Enter user:group to use by default: ")
+
+    script_path = os.path.abspath(__file__)
+    python_exe = sys.executable
+
+    flags = []
+    if default_p:
+        flags.append("-p")
+    if default_u:
+        flags.append(f"-u {default_u}")
+    
+    flag_str = " ".join(flags)
+    wrapper_content = f"""#!/bin/sh
+{python_exe} {script_path} {flag_str} "$@"
+"""
+
+    install_dir = "/usr/local/bin"
+    if not os.access(install_dir, os.W_OK):
+        print(f"No write access to {install_dir}. Will try to use sudo.")
+        use_sudo = True
+    else:
+        use_sudo = False
+
+    dest_path = os.path.join(install_dir, "copy-with-hardlinks")
+    
+    try:
+        if use_sudo:
+            # Use a temporary file and then move it with sudo
+            tmp_wrapper = "/tmp/copy-with-hardlinks-wrapper"
+            with open(tmp_wrapper, "w") as f:
+                f.write(wrapper_content)
+            
+            subprocess.run(["sudo", "mv", tmp_wrapper, dest_path], check=True)
+            subprocess.run(["sudo", "chmod", "+x", dest_path], check=True)
+        else:
+            with open(dest_path, "w") as f:
+                f.write(wrapper_content)
+            os.chmod(dest_path, 0o755)
+        
+        print(f"Successfully installed to {dest_path}")
+    except Exception as e:
+        print(f"Error during installation: {e}")
+        sys.exit(1)
+
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == 'install':
+        install()
+        return
+
     parser = argparse.ArgumentParser(description='Clone directory structure with hardlinked files.')
     parser.add_argument('source', help='Path to the source folder')
     parser.add_argument('destination', help='Path to the destination folder')
     parser.add_argument('-p', '--preserve-ownership', action='store_true', help='Preserve ownership of files')
     parser.add_argument('-u', '--user-group', help='Set user and group of files (format: user:group)')
+    
     args = parser.parse_args()
 
     clone_structure(args.source, args.destination, args.preserve_ownership, args.user_group)
