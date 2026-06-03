@@ -6,6 +6,8 @@ import grp
 import sys
 import subprocess
 
+VERSION = "1.1.0"
+
 def clone_structure(source_path, dest_dir, preserve_ownership, user_group):
     errors = []
     source_path = os.path.abspath(source_path)
@@ -54,11 +56,14 @@ def clone_structure(source_path, dest_dir, preserve_ownership, user_group):
                 if os.path.exists(dest_item):
                     os.unlink(dest_item)
                 os.link(source_item, dest_item)
-                if preserve_ownership:
-                    shutil.copystat(source_item, dest_item)
-                elif user_group:
-                    uid, gid = get_uid_gid(user_group)
-                    os.chown(dest_item, uid, gid)
+                try:
+                    if preserve_ownership:
+                        shutil.copystat(source_item, dest_item)
+                    elif user_group:
+                        uid, gid = get_uid_gid(user_group)
+                        os.chown(dest_item, uid, gid)
+                except Exception as e:
+                    print(f"Warning: Could not set permissions/stats on {dest_item}: {e}")
         except FileNotFoundError:
             print(f"Warning: File not found (skipped): {source_item}")
             errors.append(f"Not Found: {source_item}")
@@ -138,6 +143,7 @@ def main():
         install()
         return
 
+    print(f"Copy with Hardlinks v{VERSION}")
     parser = argparse.ArgumentParser(description='Clone directory structure with hardlinked files.')
     parser.add_argument('source', help='Path to the source folder')
     parser.add_argument('destination', help='Path to the destination folder')
