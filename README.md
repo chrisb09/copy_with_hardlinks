@@ -1,3 +1,6 @@
+Well, this script is kinda pointless because `cp -rl` or `cp -al` exists on linux systems...well, technically it *should* be os-agnostic...but yeah.
+
+
 # Copy with Hardlinks
 
 A simple Python utility to clone directory structures while creating hardlinks for files instead of copying their data. This is useful for creating efficient backups or snapshots on the same filesystem.
